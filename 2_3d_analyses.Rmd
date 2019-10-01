@@ -1,0 +1,195 @@
+---
+title: "Terrain analyses and rayshader for 3d plots"
+author: "Elaina Passero"
+date: "10/01/2019"
+output: html_document
+---
+
+
+# Analyzing topographic change in the USA
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(sf)  #Spatial datasets
+library(mapview) #interactive mapping
+library(raster) #Raster analysis
+library(elevatr) #National Elevation Dataset downloader. 
+library(rayshader) #3D plotting package
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+## Check out the data
+
+```{r}
+topo_change <- st_read('data/topo_change/topo_change_polygons.shp')
+#Checkout the column names
+#names(topo_change)
+biggest_area <- topo_change %>%
+  arrange(desc(AREA_SQ_KM)) %>%
+  slice(1:10)
+# Map all mines
+#mapview(biggest_area)
+```
+
+### Checkout mine in Arizona
+
+```{r}
+# Subset to just Arizona
+az_mine <- biggest_area %>%
+  filter(QUADNAME == 'esperanza_mill_AZ')
+#Check that it is the right site
+#mapview(az_mine)
+```
+
+
+## Getting our own elevation datasets
+
+### Download pre-mining DEM 
+
+```{r}
+#Check projection of az_mine
+#st_crs(az_mine)
+az_raster_before <- get_elev_raster(az_mine,z=12)
+#Look at the structure of the data
+#str(az_raster)
+#Summary of the data
+#summary(az_raster)
+plot(az_raster_before)
+#mapview(az_raster_before)
+```
+
+
+
+### Shrink the resolution
+
+```{r}
+small_az <- aggregate(az_raster_before,fact=6)
+mapview(small_az)
+```
+
+
+### Take the slope of the data
+
+```{r}
+az_slope <- terrain(small_az,opt='slope',unit='degrees')
+mapview(az_slope)
+```
+
+
+### Take the aspect of the data
+
+```{r}
+az_aspect <- terrain(small_az,opt='aspect',unit='degrees')
+mapview(az_aspect)
+```
+
+
+## 3D plotting mechanism for elevation data
+
+```{r}
+az_matrix <- matrix(raster::extract(small_az,
+                    raster::extent(small_az),buffer=500),
+                    nrow=ncol(small_az), ncol=nrow(small_az))
+az_matrix %>%
+  sphere_shade(texture = 'desert') %>%
+  add_water(detect_water(az_matrix),color='desert') %>%
+  add_shadow(ray_shade(az_matrix,zscale=2),0.5) %>%
+  add_shadow(ambient_shade(az_matrix)) %>%
+  plot_3d(az_matrix,zscale=10,fov = 0,theta=135,zoom=0.75)
+```
+
+
+# In Class work
+
+
+For this section we are really going to focus on the mine area
+so first I'm going to buffer our az_mine polygon by 2km and then
+clip both the before and after mining rasters to this new shape
+
+```{r}
+#Read in raster data
+az_raster_after <- raster('data/srtm_14_06.tif')
+az_mine_2km <- az_mine %>%
+  st_transform(2163) %>%
+  st_buffer(2000) %>%
+  #Reproject into SRTM datum (WGS84)
+  st_transform(st_crs(az_raster_after))
+#Get extent of buffered mine area
+aoi <- extent(az_mine_2km)
+#Crop after to area of interest
+mine_after <- crop(az_raster_after,aoi)
+#Crop before to area of interest (need to also reproject)
+mine_before <- crop(az_raster_before %>%
+                      projectRaster(.,crs=projection(mine_after)),
+                    aoi) %>%
+  projectRaster(.,mine_after) #match resolution
+#Force rasters to be exactly same size
+mine_before_same <- trim(mine_before)
+mine_after_same <- crop(mine_after,mine_before_same)
+#Stack these things in a rasterBrick (which we can do because we 
+#made them the exact same size)
+mines <- brick(mine_before_same,mine_after_same)
+#Add a dem_difference layer
+mines[[3]] <- mines[[1]] - mines[[2]]
+#Rename raster layers
+names(mines) <- c('Pre_mining','Post_mining','DoD')
+plot(mines)
+```
+
+
+All data for this section should be the data clipped to the mining area 
+(generated in the code chunk above)
+
+## 1) Get the slope of the SRTM (post-mining) dataset and plot this data (use the data that is clipped to the mine only).
+
+
+```{r}
+mine_after_slope <- terrain(mines$Post_mining,opt='slope',unit='degrees')
+mapview(mine_after_slope)
+```
+
+
+## 2) Use the brick code from above to plot slopes for the pre-mining, post-mining, and difference of slope
+
+```{r}
+mines_list <- unstack(mines)
+slope_brick <- brick(lapply(mines_list, 
+  function(a) {terrain(a,opt='slope',unit="degrees")})) # slope of each layer in brick
+names(slope_brick) <- names(mines)
+plot(slope_brick,main=names(slope_brick))
+```
+
+
+## 3) Use rayshader to make a 3d plot of the pre-mining mine
+
+```{r}
+pre_mined <- mines$Pre_mining
+pre_mined_matrix <- matrix(raster::extract(pre_mined,
+                        raster::extent(pre_mined)),
+                     nrow=ncol(pre_mined), ncol=nrow(pre_mined))
+
+pre_mined_matrix %>%
+  sphere_shade(texture='desert') %>%
+  add_water(detect_water(pre_mined_matrix),color='desert') %>%
+  add_shadow(ray_shade(pre_mined_matrix,zscale=2),0.5) %>%
+  add_shadow(ambient_shade(pre_mined_matrix)) %>%
+  plot_3d(pre_mined_matrix,zscale=10,fov = 0,theta=135,zoom=0.75)
+```
+
+
+## 4) Use rayshader to make 3d plot of the post-mining mine
+
+```{r}
+post_mined <- mines$Post_mining
+post_mined_matrix <- matrix(raster::extract(post_mined,
+                        raster::extent(post_mined)),
+                     nrow=ncol(post_mined), ncol=nrow(post_mined))
+
+post_mined_matrix %>%
+  sphere_shade(texture='desert') %>%
+  add_water(detect_water(post_mined_matrix),color='desert') %>%
+  add_shadow(ray_shade(post_mined_matrix,zscale=2),0.5) %>%
+  add_shadow(ambient_shade(post_mined_matrix)) %>%
+  plot_3d(post_mined_matrix,zscale=10,fov = 0,theta=135,zoom=0.75)
+```
