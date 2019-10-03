@@ -172,6 +172,7 @@ You may want to check out the command maxValue and minValue
 maxValue(dem_diff)
 minValue(dem_diff)
 ```
+While some places experience no changed in elevation from mining, the greatest increase in elevation was `r maxValue(dem_diff)` and the greatest decrease in elevation was `r minValue(dem_diff)`.
 
 
 ## 2) What is the background elevation "error" between NED and SRTM? 
@@ -267,4 +268,4 @@ ggplot(mined_table, aes(x=dem_values,color=type))+
   geom_density()
                     
 ```
-
+Mined areas have a wider distribution of differences in elevation than areas that were unmined. Difference in elevation values were always negative. The unmined areas had differences in elevation that were concentrated around zero because mining activities were not impacting changes in elevation.
